@@ -6,3 +6,7 @@ data/*.db
 data/*.db-*
 .vite/
 data/fixtures/ground-truth.json
+
+# Eval run outputs (ids and labels only) and golden sets with real transcripts
+evals/results/*.json
+evals/golden/*.jsonl

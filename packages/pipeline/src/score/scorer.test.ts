@@ -38,6 +38,10 @@ describe('prompt', () => {
   it('rejects path-like versions', () => {
     expect(() => loadPrompt('../secrets')).toThrow(/Invalid prompt version/);
   });
+
+  it('names the missing file for an unknown version', () => {
+    expect(() => loadPrompt('scorer.v999')).toThrow(/prompts\/scorer\.v999\.md/);
+  });
 });
 
 describe('OUTPUT_JSON_SCHEMA', () => {

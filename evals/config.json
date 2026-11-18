@@ -1,0 +1,7 @@
+{
+  "categoryAccuracyThreshold": 0.8,
+  "seedSampleSize": 200,
+  "groundTruthPath": "data/fixtures/ground-truth.json",
+  "goldenDir": "evals/golden",
+  "resultsDir": "evals/results"
+}
