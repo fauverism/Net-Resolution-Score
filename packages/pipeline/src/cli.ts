@@ -14,6 +14,8 @@ seed options:
   --interactions <n>  approximate total (default 3000)
   --days <n>          length of the data period (default 60)
   --end <iso date>    end of the data period (default 2026-11-15)
+  --demo-scores       also fill scores from the answer key (model "demo-answer-key"),
+                      so the dashboard can be shown without an API key
 
 score / link options:
   --limit <n>         judge at most n new items (cheap test runs)

@@ -3,5 +3,10 @@
   "seedSampleSize": 200,
   "groundTruthPath": "data/fixtures/ground-truth.json",
   "goldenDir": "evals/golden",
-  "resultsDir": "evals/results"
+  "resultsDir": "evals/results",
+  "decisionReady": {
+    "minGoldenCases": 50,
+    "maxInflationRate": 0.05,
+    "maxAgeDays": 30
+  }
 }

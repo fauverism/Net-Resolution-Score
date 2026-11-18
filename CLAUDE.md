@@ -52,7 +52,7 @@ evals/              scorer accuracy evals against labeled transcripts
 - **redact**: strip PII.
 - **score**: Anthropic API → Zod-validated category and effort.
 - **link**: window candidates → LLM same-goal check → `reclassifications` row (score rows never edited).
-- **aggregate**: NRS by channel and business line → `runs`. **drivers**: cluster detractor goals, rank by volume × severity, AI-suggested fix/owner for the top 3 → `driver_runs`. Also: `calibrate`.
+- **aggregate**: NRS by channel and business line → `runs`. **drivers**: cluster detractor goals, rank by volume × severity, AI-suggested fix/owner for the top 3 → `driver_runs`. **calibrate**: latest eval → Decision-ready / Calibrating → `calibrations`.
 
 ## Commands
 
@@ -61,7 +61,7 @@ npm run seed       # reproducible synthetic data (--seed N); never calls the LLM
 npm run pipeline   # `all`: ingest → redact → score → link → aggregate → drivers (-- --limit N)
 npm run pipeline -- <stage> [opts]   # one stage, e.g. aggregate --from 2026-10-01 --to 2026-10-31
 npm run eval -- --prompt scorer.v1 [--prompt scorer.v2]   # accuracy vs seed + golden set; exits 1 below evals/config.json threshold
-npm run dev        # start the dashboard
+npm run dev        # dashboard for ANTHROPIC_MODEL (demo: seed -- --demo-scores, then ANTHROPIC_MODEL=demo-answer-key)
 npm test           # Vitest across all packages
 ```
 

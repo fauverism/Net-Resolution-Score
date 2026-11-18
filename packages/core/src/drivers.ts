@@ -151,7 +151,8 @@ const AiSuggested = <T extends z.ZodType>(value: T) =>
     source: z.literal(AI_SUGGESTED),
   });
 
-export const DriverSchema = RankedClusterSchema.omit({ interactionIds: true }).extend({
+/** Keeps interactionIds so the dashboard can drill into a driver's conversations. */
+export const DriverSchema = RankedClusterSchema.extend({
   rank: z.number().int().positive(),
   /** Plain-language description of what is driving these detractors. */
   driver: z.string(),

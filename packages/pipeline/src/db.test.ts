@@ -11,6 +11,7 @@ describe('migrate', () => {
       '004_linking.sql',
       '005_drivers.sql',
       '006_repeat_contacts.sql',
+      '007_calibrations.sql',
     ]);
     expect(migrate(db)).toEqual([]);
 

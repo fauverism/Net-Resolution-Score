@@ -9,6 +9,9 @@ import type { Db } from '../db.ts';
 
 export interface PeriodRow {
   interactionId: string;
+  startedAt: string;
+  channel: Channel;
+  businessLine: string;
   /** Null when the interaction has no score for this model + prompt version. */
   score: ScoreRecord | null;
   reclassifications: Reclassification[];
@@ -28,7 +31,7 @@ export function loadPeriodScores(
 ): PeriodRow[] {
   const rows = db
     .prepare(
-      `SELECT i.id, i.channel, i.business_line, s.json
+      `SELECT i.id, i.channel, i.business_line, i.started_at, s.json
        FROM interactions i
        LEFT JOIN scores s ON s.interaction_id = i.id AND s.model = ? AND s.prompt_version = ?
        WHERE i.started_at >= ? AND i.started_at < ?
@@ -38,6 +41,7 @@ export function loadPeriodScores(
     id: string;
     channel: Channel;
     business_line: string;
+    started_at: string;
     json: string | null;
   }[];
 
@@ -66,6 +70,13 @@ export function loadPeriodScores(
             status: 'score_failed',
           } as ScoreRecord);
     }
-    return { interactionId: row.id, score, reclassifications: byInteraction.get(row.id) ?? [] };
+    return {
+      interactionId: row.id,
+      startedAt: row.started_at,
+      channel: row.channel,
+      businessLine: row.business_line,
+      score,
+      reclassifications: byInteraction.get(row.id) ?? [],
+    };
   });
 }

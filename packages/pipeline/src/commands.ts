@@ -5,12 +5,14 @@ import { migrate, openDb } from './db.ts';
 import { resolveFromRoot } from './paths.ts';
 import { runRedaction } from './redact/index.ts';
 import { defaultPeriod, runAggregate } from './aggregate/stage.ts';
+import { runCalibrate } from './calibrate/stage.ts';
 import { DEFAULT_CLUSTER_PROMPT_VERSION, DEFAULT_SUGGEST_PROMPT_VERSION } from './drivers/llm.ts';
 import { runDrivers } from './drivers/stage.ts';
 import { DEFAULT_LINKER_PROMPT_VERSION, runLinking } from './link/index.ts';
 import { DEFAULT_PROMPT_VERSION, loadPrompt } from './score/prompt.ts';
 import { anthropicScorerClient } from './score/scorer.ts';
 import { runScoring } from './score/stage.ts';
+import { writeDemoScores } from './seed/demo.ts';
 import { DEFAULT_GENERATE_OPTIONS, generate, summarize, writeSeed } from './seed/index.ts';
 
 export const GROUND_TRUTH_PATH = 'data/fixtures/ground-truth.json';
@@ -42,6 +44,8 @@ const seed: Command = async ({ config, log }, args = []) => {
       interactions: { type: 'string', default: String(d.interactions) },
       days: { type: 'string', default: String(d.days) },
       end: { type: 'string', default: d.end.toISOString() },
+      /** Also fill scores from the answer key (model "demo-answer-key") for a demo without an API key. */
+      'demo-scores': { type: 'boolean', default: false },
     },
   });
   const int = (name: string, v: string) => {
@@ -67,6 +71,7 @@ const seed: Command = async ({ config, log }, args = []) => {
     const applied = migrate(db);
     if (applied.length) log(`[seed] applied migrations: ${applied.join(', ')}`);
     writeSeed(db, data, resolveFromRoot(GROUND_TRUTH_PATH));
+    if (values['demo-scores']) await writeDemoScores(db, data, config.returnWindow, log);
   } finally {
     db.close();
   }
@@ -221,6 +226,26 @@ const drivers: Command = async ({ config, log }, args = []) => {
   }
 };
 
+/** Is the scorer trustworthy enough to act on? Reads the latest eval result; no LLM calls. */
+const calibrate: Command = async ({ config, log }) => {
+  const model = requireModel(config);
+  const db = openDb(config.dbPath);
+  try {
+    migrate(db);
+    runCalibrate(
+      db,
+      {
+        model,
+        promptVersion: DEFAULT_PROMPT_VERSION,
+        evalConfigPath: resolveFromRoot('evals/config.json'),
+      },
+      log,
+    );
+  } finally {
+    db.close();
+  }
+};
+
 /** Pipeline order for `all`. Seed is separate: it's a setup step, not a pipeline stage. */
 export const PIPELINE_STAGES = [
   'ingest',
@@ -229,6 +254,7 @@ export const PIPELINE_STAGES = [
   'link',
   'aggregate',
   'drivers',
+  'calibrate',
 ] as const;
 
 export const COMMANDS = {
@@ -239,7 +265,7 @@ export const COMMANDS = {
   link,
   aggregate,
   drivers,
-  calibrate: notYet('calibrate'),
+  calibrate,
   // Flags go to score, link, aggregate and drivers, e.g. `npm run pipeline -- --limit 20`.
   all: async (ctx, args = []) => {
     for (const stage of PIPELINE_STAGES) {

@@ -202,7 +202,7 @@ export async function runDrivers(
         labelingFailed: inputs.length - labeled.length,
         clusters: ranked.length,
       },
-      top: top.map(({ interactionIds: _ids, ...c }, i) => {
+      top: top.map((c, i) => {
         const s = suggestions?.[i];
         return {
           ...c,

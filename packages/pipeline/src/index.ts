@@ -14,3 +14,6 @@ export { addUsage, estimateCostUsd, ZERO_USAGE } from './score/pricing.ts';
 export { mapWithConcurrency } from './score/pool.ts';
 export { resolveFromRoot, REPO_ROOT } from './paths.ts';
 export { GROUND_TRUTH_PATH } from './commands.ts';
+export { loadPeriodScores, type PeriodRow } from './aggregate/load.ts';
+export { defaultPeriod } from './aggregate/stage.ts';
+export { latestCalibration, runCalibrate } from './calibrate/stage.ts';

@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { DecisionReadyCriteriaSchema } from '@nrs/core';
 import { z } from 'zod';
 
 export const EvalConfigSchema = z
@@ -10,6 +11,8 @@ export const EvalConfigSchema = z
     groundTruthPath: z.string(),
     goldenDir: z.string(),
     resultsDir: z.string(),
+    /** What the dashboard's "Decision-ready" badge requires, besides the accuracy threshold. */
+    decisionReady: DecisionReadyCriteriaSchema.omit({ minCategoryAccuracy: true }),
   })
   .strict();
 export type EvalConfig = z.infer<typeof EvalConfigSchema>;
