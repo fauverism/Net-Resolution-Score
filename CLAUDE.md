@@ -7,14 +7,14 @@ customer interaction, whether a human or an AI agent handled it.
 
 `NRS = %promoters − %detractors`, range **−100 to +100**.
 
-| Category  | Rule                                                                 |
-|-----------|----------------------------------------------------------------------|
-| Promoter  | Resolved on first try **and** effort = 1                             |
-| Passive   | Resolved, but effort 2–3                                             |
+| Category  | Rule                                                                                                    |
+| --------- | ------------------------------------------------------------------------------------------------------- |
+| Promoter  | Resolved on first try **and** effort = 1                                                                |
+| Passive   | Resolved, but effort 2–3                                                                                |
 | Detractor | Unresolved, escalated, abandoned, **or** customer returned about the same goal within the return window |
 
 - **Return window**: defaults to 7 days. Never hardcode it. Resolve it in this
-  order: per-business-line override → env `NRS_RETURN_WINDOW_DAYS` → `7`.
+  order: per-business-line override → env `RETURN_WINDOW_DAYS` → `7`.
 - **Channels**: `ai_agent | human | hybrid`. Every metric must be reportable per channel.
 
 ## Non-negotiables
@@ -41,24 +41,24 @@ customer interaction, whether a human or an AI agent handled it.
 
 ```
 packages/core       types, Zod schemas, pure score math
-packages/pipeline   ingest → redact → score → link → aggregate
-apps/dashboard      Vite + React UI
-data/               SQLite db, fixtures (PII-free)
+packages/pipeline   CLI (src/cli.ts), db + SQL migrations (migrations/*.sql)
+apps/dashboard      Vite + React on :5150; Hono API in server/ on :5151, proxied at /api
+data/               SQLite db (better-sqlite3, gitignored), fixtures (PII-free)
 evals/              scorer accuracy evals against labeled transcripts
 ```
 
-Pipeline stages:
-- **ingest**: parse and validate raw interactions.
+- **ingest** (pipeline stages, in order): parse and validate raw interactions.
 - **redact**: strip PII.
 - **score**: Anthropic API → Zod-validated category and effort.
 - **link**: detect same-goal returns within the window.
-- **aggregate**: NRS by channel and business line.
+- **aggregate**: NRS by channel and business line. Also: `drivers`, `calibrate`.
 
 ## Commands
 
 ```bash
-npm run seed       # load fixtures into data/ SQLite
-npm run pipeline   # run ingest → aggregate end to end
+npm run seed       # migrate db + load fixtures into data/ SQLite
+npm run pipeline   # `all`: ingest → score → link → aggregate → drivers
+npm run cli -w @nrs/pipeline -- <cmd>   # run one stage
 npm run eval       # run scorer evals in /evals
 npm run dev        # start the dashboard
 npm test           # Vitest across all packages
@@ -68,7 +68,7 @@ npm test           # Vitest across all packages
 
 - `ANTHROPIC_API_KEY`: required for scoring.
 - `ANTHROPIC_MODEL`: required. The scoring model.
-- `NRS_RETURN_WINDOW_DAYS`: optional, default `7`.
+- `RETURN_WINDOW_DAYS` (default `7`), `SCORING_CONCURRENCY` (default `5`), `NRS_DB_PATH`.
 
 ## Before you finish a change
 
