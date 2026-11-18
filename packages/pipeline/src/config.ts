@@ -8,6 +8,7 @@ const EnvSchema = z.object({
   ANTHROPIC_MODEL: z.string().optional(),
   RETURN_WINDOW_DAYS: z.coerce.number().int().positive().default(7),
   SCORING_CONCURRENCY: z.coerce.number().int().positive().default(5),
+  SCORING_EFFORT: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
   NRS_DB_PATH: z.string().default('data/nrs.db'),
 });
 
@@ -17,6 +18,8 @@ export interface Config {
   anthropicModel: string | undefined;
   returnWindowDays: number;
   scoringConcurrency: number;
+  /** Optional effort for the scorer; unset uses the model's default. */
+  scoringEffort: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | undefined;
   dbPath: string;
 }
 
@@ -35,6 +38,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     anthropicModel: parsed.ANTHROPIC_MODEL,
     returnWindowDays: parsed.RETURN_WINDOW_DAYS,
     scoringConcurrency: parsed.SCORING_CONCURRENCY,
+    scoringEffort: parsed.SCORING_EFFORT,
     dbPath: resolveFromRoot(parsed.NRS_DB_PATH),
   };
 }

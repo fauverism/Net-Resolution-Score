@@ -58,7 +58,7 @@ evals/              scorer accuracy evals against labeled transcripts
 
 ```bash
 npm run seed       # reproducible synthetic data (--seed N); never calls the LLM
-npm run pipeline   # `all`: ingest → score → link → aggregate → drivers
+npm run pipeline   # `all`: ingest → redact → score → link → aggregate → drivers (-- --limit N)
 npm run cli -w @nrs/pipeline -- <cmd>   # run one stage
 npm run eval       # run scorer evals in /evals
 npm run dev        # start the dashboard
@@ -69,7 +69,7 @@ npm test           # Vitest across all packages
 
 - `ANTHROPIC_API_KEY`: required for scoring.
 - `ANTHROPIC_MODEL`: required. The scoring model.
-- `RETURN_WINDOW_DAYS` (default `7`), `SCORING_CONCURRENCY` (default `5`), `NRS_DB_PATH`.
+- `RETURN_WINDOW_DAYS` (default `7`), `SCORING_CONCURRENCY` (default `5`), `SCORING_EFFORT`, `NRS_DB_PATH`.
 
 ## Before you finish a change
 

@@ -33,32 +33,101 @@ export const InteractionSchema = z.object({
 export type Interaction = z.infer<typeof InteractionSchema>;
 
 /** The scorer's judgement of a single interaction (validated LLM output). */
-export const InteractionJudgementSchema = z.object({
-  resolved: z.boolean(),
-  firstContact: z.boolean(),
-  effort: EffortSchema,
-  escalated: z.boolean(),
-  abandoned: z.boolean(),
-  /** Short summary of the customer's goal, used to link return contacts. */
-  goal: z.string(),
-  confidence: z.number().min(0).max(1),
-  rationale: z.string(),
-});
-export type InteractionJudgement = z.infer<typeof InteractionJudgementSchema>;
+/** Did the customer get what they came for? "partial": the agent claimed it, the customer didn't confirm. */
+export const ResolvedSchema = z.enum(['no', 'partial', 'yes']);
+export type Resolved = z.infer<typeof ResolvedSchema>;
 
-export const ScoredInteractionSchema = z.object({
+const Sentiment = z.number().int().min(-2).max(2);
+
+/** What the LLM scorer returns for one interaction (validated before use). */
+export const ScorerOutputSchema = z
+  .object({
+    channel: ChannelSchema,
+    customer_goal: z.string().trim().min(1).max(300),
+    resolved: ResolvedSchema,
+    effort: z.number().int().min(1).max(3),
+    sentiment_start: Sentiment,
+    sentiment_end: Sentiment,
+    asked_for_human: z.boolean(),
+    abandoned: z.boolean(),
+    category: CategorySchema,
+    /** A single verbatim customer quote supporting the category. */
+    evidence: z.string().trim().min(1).max(500),
+  })
+  .strict();
+export type ScorerOutput = z.infer<typeof ScorerOutputSchema>;
+
+export const ScoreFlagSchema = z.enum([
+  /** The evidence quote couldn't be found in the transcript. */
+  'evidence_unverified',
+  /** The quote was found, but only in agent turns. */
+  'evidence_not_from_customer',
+  /** The scorer's channel differs from the recorded channel. */
+  'channel_mismatch',
+  /** Code lowered the scorer's category to match its own facts. */
+  'category_lowered',
+  /** First response failed validation; the retry succeeded. */
+  'retried',
+]);
+export type ScoreFlag = z.infer<typeof ScoreFlagSchema>;
+
+export const CategoryOverrideSchema = z.object({
+  from: CategorySchema,
+  to: CategorySchema,
+  reasons: z.array(z.string()),
+});
+export type CategoryOverride = z.infer<typeof CategoryOverrideSchema>;
+
+export const TokenUsageSchema = z.object({
+  inputTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+  cacheReadTokens: z.number().int().nonnegative(),
+  cacheWriteTokens: z.number().int().nonnegative(),
+});
+export type TokenUsage = z.infer<typeof TokenUsageSchema>;
+
+const ScoreMeta = {
   interactionId: z.string().min(1),
   channel: ChannelSchema,
   businessLine: z.string().min(1),
-  judgement: InteractionJudgementSchema,
-  /** Set by the link stage; null until linked. */
-  returnedWithinWindow: z.boolean().nullable(),
-  category: CategorySchema,
   model: z.string().min(1),
   promptVersion: z.string().min(1),
   scoredAt: IsoDateTime,
+  /** API calls made for this score (0 when served from cache). */
+  attempts: z.number().int().nonnegative(),
+};
+
+export const ScoredInteractionSchema = z.object({
+  ...ScoreMeta,
+  status: z.literal('scored'),
+  output: ScorerOutputSchema,
+  /** Final category: the scorer's, lowered when its own facts don't support it. Never raised. */
+  category: CategorySchema,
+  override: CategoryOverrideSchema.nullable(),
+  flags: z.array(ScoreFlagSchema),
+  /** Set by the link stage; null until linked. */
+  returnedWithinWindow: z.boolean().nullable(),
+  cacheKey: z.string(),
+  cached: z.boolean(),
+  usage: TokenUsageSchema,
 });
 export type ScoredInteraction = z.infer<typeof ScoredInteractionSchema>;
+
+export const ScoreFailureSchema = z.object({
+  ...ScoreMeta,
+  status: z.literal('score_failed'),
+  reason: z.enum(['invalid_output', 'refusal', 'api_error']),
+  /** Validation or API error text. Never transcript content. */
+  detail: z.string(),
+  usage: TokenUsageSchema,
+});
+export type ScoreFailure = z.infer<typeof ScoreFailureSchema>;
+
+export const ScoreRecordSchema = z.discriminatedUnion('status', [
+  ScoredInteractionSchema,
+  ScoreFailureSchema,
+]);
+export type ScoreRecord = z.infer<typeof ScoreRecordSchema>;
 
 export const SurveyResponseSchema = z.object({
   customerId: z.string().min(1),

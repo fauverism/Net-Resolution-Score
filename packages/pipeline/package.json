@@ -16,6 +16,7 @@
     "all": "tsx src/cli.ts all"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.10.0",
     "@nrs/core": "*",
     "better-sqlite3": "^12.4.0",
     "zod": "^4.1.0"

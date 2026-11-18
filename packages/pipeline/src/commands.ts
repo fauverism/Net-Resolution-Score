@@ -1,9 +1,12 @@
 import { parseArgs } from 'node:util';
-import type { Config } from './config.ts';
+import Anthropic from '@anthropic-ai/sdk';
+import { requireModel, type Config } from './config.ts';
 import { migrate, openDb } from './db.ts';
 import { resolveFromRoot } from './paths.ts';
 import { runRedaction } from './redact/index.ts';
-import { loadScoringInputs } from './score/inputs.ts';
+import { loadPrompt } from './score/prompt.ts';
+import { anthropicScorerClient } from './score/scorer.ts';
+import { runScoring } from './score/stage.ts';
 import { DEFAULT_GENERATE_OPTIONS, generate, summarize, writeSeed } from './seed/index.ts';
 
 export const GROUND_TRUTH_PATH = 'data/fixtures/ground-truth.json';
@@ -85,10 +88,40 @@ const redactStage = withDb((db, { log }) => {
   runRedaction(db, log);
 });
 
-const score = withDb((db, { log }) => {
-  const inputs = loadScoringInputs(db);
-  log(`[score] ${inputs.length} redacted transcripts ready; scoring not implemented yet`);
-});
+/**
+ * Scores redacted transcripts with the Anthropic API. `--limit N` caps how many
+ * unscored interactions this run sends (cheap test runs).
+ */
+const score: Command = async ({ config, log }, args = []) => {
+  const { values } = parseArgs({ args, options: { limit: { type: 'string' } }, strict: false });
+  let limit: number | undefined;
+  if (typeof values.limit === 'string') {
+    limit = Number(values.limit);
+    if (!Number.isInteger(limit) || limit < 0)
+      throw new Error('--limit must be a non-negative integer');
+  }
+  const model = requireModel(config); // fail fast before touching anything
+  const db = openDb(config.dbPath);
+  try {
+    migrate(db);
+    // Our own backoff handles 429/529, so turn off the SDK's built-in retries.
+    const client = anthropicScorerClient(new Anthropic({ maxRetries: 0 }));
+    await runScoring(
+      db,
+      client,
+      {
+        model,
+        prompt: loadPrompt(),
+        effort: config.scoringEffort,
+        concurrency: config.scoringConcurrency,
+        limit,
+      },
+      log,
+    );
+  } finally {
+    db.close();
+  }
+};
 
 /** Pipeline order for `all`. Seed is separate: it's a setup step, not a pipeline stage. */
 export const PIPELINE_STAGES = [
@@ -109,8 +142,9 @@ export const COMMANDS = {
   aggregate: notYet('aggregate'),
   drivers: notYet('drivers'),
   calibrate: notYet('calibrate'),
-  all: async (ctx) => {
-    for (const stage of PIPELINE_STAGES) await COMMANDS[stage](ctx, []);
+  // Flags go to the score stage, e.g. `npm run pipeline -- --limit 20`.
+  all: async (ctx, args = []) => {
+    for (const stage of PIPELINE_STAGES) await COMMANDS[stage](ctx, stage === 'score' ? args : []);
   },
 } satisfies Record<string, Command>;
 
