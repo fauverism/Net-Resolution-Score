@@ -4,7 +4,7 @@ import { migrate, openDb } from './db.ts';
 describe('migrate', () => {
   it('creates the initial schema and is idempotent', () => {
     const db = openDb(':memory:');
-    expect(migrate(db)).toEqual(['001_init.sql']);
+    expect(migrate(db)).toEqual(['001_init.sql', '002_redacted_transcripts.sql']);
     expect(migrate(db)).toEqual([]);
 
     const tables = db
@@ -19,6 +19,7 @@ describe('migrate', () => {
         'reclassifications',
         'surveys',
         'runs',
+        'redacted_transcripts',
       ]),
     );
   });

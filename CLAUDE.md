@@ -24,6 +24,7 @@ customer interaction, whether a human or an AI agent handled it.
    prompts, parsing fallbacks and tie-breaks in code.
 2. **Redact PII before any transcript leaves the process**: LLM calls, logs,
    exports, fixtures. Redaction runs before scoring, never after. (Seed PII is fake by design.)
+   Score reads transcripts only via `loadScoringInputs()` (`RedactedTranscript`). Log counts, not values.
 3. **Model comes from env `ANTHROPIC_MODEL`.** Never hardcode a model name in
    code, tests, or fixtures. Fail fast if it's unset.
 4. **Validate every external boundary with Zod**: LLM output, file imports and

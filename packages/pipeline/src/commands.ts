@@ -2,6 +2,8 @@ import { parseArgs } from 'node:util';
 import type { Config } from './config.ts';
 import { migrate, openDb } from './db.ts';
 import { resolveFromRoot } from './paths.ts';
+import { runRedaction } from './redact/index.ts';
+import { loadScoringInputs } from './score/inputs.ts';
 import { DEFAULT_GENERATE_OPTIONS, generate, summarize, writeSeed } from './seed/index.ts';
 
 export const GROUND_TRUTH_PATH = 'data/fixtures/ground-truth.json';
@@ -66,13 +68,43 @@ const seed: Command = async ({ config, log }, args = []) => {
   log(summarize(data));
 };
 
+const withDb =
+  (fn: (db: ReturnType<typeof openDb>, ctx: CommandContext) => void): Command =>
+  async (ctx) => {
+    const db = openDb(ctx.config.dbPath);
+    try {
+      migrate(db);
+      fn(db, ctx);
+    } finally {
+      db.close();
+    }
+  };
+
+/** Must run before score: score only ever sees redacted transcripts. */
+const redactStage = withDb((db, { log }) => {
+  runRedaction(db, log);
+});
+
+const score = withDb((db, { log }) => {
+  const inputs = loadScoringInputs(db);
+  log(`[score] ${inputs.length} redacted transcripts ready; scoring not implemented yet`);
+});
+
 /** Pipeline order for `all`. Seed is separate: it's a setup step, not a pipeline stage. */
-export const PIPELINE_STAGES = ['ingest', 'score', 'link', 'aggregate', 'drivers'] as const;
+export const PIPELINE_STAGES = [
+  'ingest',
+  'redact',
+  'score',
+  'link',
+  'aggregate',
+  'drivers',
+] as const;
 
 export const COMMANDS = {
   seed,
   ingest: notYet('ingest'),
-  score: notYet('score'),
+  redact: redactStage,
+  score,
   link: notYet('link'),
   aggregate: notYet('aggregate'),
   drivers: notYet('drivers'),
