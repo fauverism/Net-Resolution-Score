@@ -106,10 +106,26 @@ describe('finalCategory', () => {
     expect(finalCategory(scored('promoter'), [reclass()])).toBe('detractor');
   });
 
-  it('applies the latest reclassification', () => {
-    const early = reclass({ toCategory: 'detractor', createdAt: '2026-11-02T00:00:00.000Z' });
-    const late = reclass({ toCategory: 'passive', createdAt: '2026-11-03T00:00:00.000Z' });
-    expect(finalCategory(scored('promoter'), [late, early])).toBe('passive');
+  it('takes the lowest category, whatever order the reclassifications came in', () => {
+    const detractor = reclass({ toCategory: 'detractor', createdAt: '2026-11-02T00:00:00.000Z' });
+    const passive = reclass({ toCategory: 'passive', createdAt: '2026-11-03T00:00:00.000Z' });
+    expect(finalCategory(scored('promoter'), [passive, detractor])).toBe('detractor');
+    expect(finalCategory(scored('promoter'), [detractor, passive])).toBe('detractor');
+  });
+
+  it('caps a promoter at passive for a repeat contact', () => {
+    expect(
+      finalCategory(scored('promoter'), [
+        reclass({ toCategory: 'passive', reason: 'repeat_contact' }),
+      ]),
+    ).toBe('passive');
+  });
+
+  it('never lets a reclassification raise a category', () => {
+    expect(finalCategory(scored('detractor'), [reclass({ toCategory: 'promoter' })])).toBe(
+      'detractor',
+    );
+    expect(finalCategory(scored('passive'), [reclass({ toCategory: 'promoter' })])).toBe('passive');
   });
 
   it("ignores another interaction's reclassifications", () => {
@@ -267,6 +283,16 @@ describe('falseResolutionRate', () => {
       item('detractor', { claimedResolved: false }),
     ];
     expect(falseResolutionRate(items)).toMatchObject({ n: 3, count: 1, pct: 33.3 });
+  });
+
+  it('counts an unconfirmed ("partial") resolution as a claim', () => {
+    const partial = toReportItem(scored('passive', { resolved: 'partial' }), [reclass()]);
+    expect(partial.claimedResolved).toBe(true);
+    expect(falseResolutionRate([partial, item('promoter')])).toMatchObject({
+      n: 2,
+      count: 1,
+      pct: 50,
+    });
   });
 
   it('is 0 for all promoters, null for nothing claimed resolved', () => {

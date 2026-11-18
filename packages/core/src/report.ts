@@ -84,7 +84,7 @@ export const PeriodReportSchema = z.object({
   rates: z.object({
     /** Share of ai_agent interactions where the customer asked for a human. */
     escape: RateReportSchema,
-    /** Share of claimed resolutions later reclassified as false_resolution. */
+    /** Share of claimed resolutions (resolved yes or partial) later reclassified as false_resolution. */
     falseResolution: z.object({
       overall: RateReportSchema,
       byChannel: ByChannel(RateReportSchema),
@@ -111,7 +111,7 @@ export interface ReportItem {
   scoreFailed: boolean;
   askedForHuman: boolean;
   abandoned: boolean;
-  /** The scorer said resolved = "yes". */
+  /** The agent claimed resolution: the scorer said resolved "yes" or "partial" (claimed, unconfirmed). */
   claimedResolved: boolean;
   /** Reclassified with reason false_resolution. */
   falseResolution: boolean;
@@ -119,22 +119,25 @@ export interface ReportItem {
 
 // ───────────── category ─────────────
 
-const byLatest = (a: Reclassification, b: Reclassification) =>
-  a.createdAt.localeCompare(b.createdAt) || a.id - b.id;
+const RANK: Record<Category, number> = { detractor: 0, passive: 1, promoter: 2 };
 
 /**
- * The category the report counts. The latest reclassification for this interaction wins
- * (it's the audited decision); otherwise the score's category. A failed score falls back
- * to detractor, the lowest defensible category (CLAUDE.md #4).
+ * The category the report counts: the LOWEST of the score's category and every
+ * reclassification of this interaction. Taking the lowest (not the latest) means no
+ * reclassification, in any order, can ever raise a category (CLAUDE.md #1). A failed score
+ * falls back to detractor, the lowest defensible category (CLAUDE.md #4).
  */
 export function finalCategory(
   score: ScoreRecord,
   reclassifications: readonly Reclassification[],
 ): Category {
-  const mine = reclassifications.filter((r) => r.interactionId === score.interactionId);
-  const latest = [...mine].sort(byLatest).at(-1);
-  if (latest) return latest.toCategory;
-  return score.status === 'scored' ? score.category : 'detractor';
+  let category: Category = score.status === 'scored' ? score.category : 'detractor';
+  for (const r of reclassifications) {
+    if (r.interactionId === score.interactionId && RANK[r.toCategory] < RANK[category]) {
+      category = r.toCategory;
+    }
+  }
+  return category;
 }
 
 export function toReportItem(
@@ -151,7 +154,7 @@ export function toReportItem(
     scoreFailed: !scored,
     askedForHuman: scored && score.output.asked_for_human,
     abandoned: scored && score.output.abandoned,
-    claimedResolved: scored && score.output.resolved === 'yes',
+    claimedResolved: scored && score.output.resolved !== 'no',
     falseResolution: mine.some((r) => r.reason === 'false_resolution'),
   };
 }

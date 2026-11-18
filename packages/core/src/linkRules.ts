@@ -37,9 +37,13 @@ export interface ReturnCandidate {
 const DAY = 86_400_000;
 
 /**
- * Deterministic stage 1: pairs (A, B) for the same customer where A was scored
- * resolved = "yes" and B starts after A, within the return window for A's business line.
- * A that is already a detractor is skipped (reclassifying it changes nothing).
+ * Deterministic stage 1: pairs (A, B) for the same customer where B starts after A within
+ * the return window for A's business line, and the pair can change a category:
+ * - A is scored and not already a detractor (resolved "yes" or "partial", the usual shape
+ *   of a false resolution): a confirmed return makes A a detractor. CLAUDE.md's return
+ *   rule applies however resolved A looked.
+ * - or B is a scored promoter: a confirmed return caps B at passive, since a repeat
+ *   contact isn't "resolved on first try". This holds even when A is already a detractor.
  * B can be any later interaction, scored or not, in any business line: the LLM decides
  * whether it's about the same goal.
  */
@@ -55,13 +59,16 @@ export function findReturnCandidates(
         x.startedAt.localeCompare(y.startedAt) || x.interactionId.localeCompare(y.interactionId),
     );
     sorted.forEach((a, i) => {
-      if (a.resolved !== 'yes' || a.category === null || a.category === 'detractor') return;
+      // A can still become a false resolution; otherwise the pair only matters if B is a
+      // promoter that a confirmed link would cap (a repeat contact isn't a first try).
+      const aCanFall = a.resolved !== null && a.category !== null && a.category !== 'detractor';
       const windowDays = returnWindowDaysFor(a.businessLine, cfg);
       const aStart = new Date(a.startedAt);
       for (const b of sorted.slice(i + 1)) {
         const bStart = new Date(b.startedAt);
         if (bStart.getTime() - aStart.getTime() > windowDays * DAY) break;
         if (!isWithinReturnWindow(aStart, bStart, windowDays)) continue; // same instant
+        if (!aCanFall && b.category !== 'promoter') continue;
         out.push({ a, b, gapDays: (bStart.getTime() - aStart.getTime()) / DAY, windowDays });
       }
     });

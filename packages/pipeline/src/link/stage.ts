@@ -40,12 +40,16 @@ export interface LinkRunSummary {
   unconfirmed: number;
   rejected: number;
   failed: number;
+  /** A → detractor (false_resolution). */
   reclassified: number;
+  /** B promoter → passive (repeat_contact). */
+  repeatContacts: number;
   usage: TokenUsage;
   estCostUsd: number | null;
 }
 
 export const FALSE_RESOLUTION = 'false_resolution';
+export const REPEAT_CONTACT = 'repeat_contact';
 const SOURCE = 'link';
 
 /** Every interaction with its scorer verdict (null when unscored or unparseable). */
@@ -178,6 +182,7 @@ export async function runLinking(
     rejected: 0,
     failed: 0,
     reclassified: 0,
+    repeatContacts: 0,
     usage: ZERO_USAGE,
   };
 
@@ -236,7 +241,7 @@ export async function runLinking(
     const cost = estimateCostUsd(model, s.usage);
     db.prepare(
       `UPDATE link_runs SET finished_at = ?, evaluated = ?, cached = ?, confirmed = ?, unconfirmed = ?,
-         rejected = ?, failed = ?, reclassified = ?, input_tokens = ?, output_tokens = ?,
+         rejected = ?, failed = ?, reclassified = ?, repeat_contacts = ?, input_tokens = ?, output_tokens = ?,
          cache_read_tokens = ?, cache_write_tokens = ?, est_cost_usd = ?, error = ?
        WHERE id = ?`,
     ).run(
@@ -248,6 +253,7 @@ export async function runLinking(
       s.rejected,
       s.failed,
       s.reclassified,
+      s.repeatContacts,
       s.usage.inputTokens,
       s.usage.outputTokens,
       s.usage.cacheReadTokens,
@@ -268,14 +274,16 @@ export async function runLinking(
     throw err;
   }
 
-  s.reclassified = reclassifyConfirmed(db, byId, model, prompt.version, now, log);
+  const r = reclassifyConfirmed(db, byId, model, prompt.version, now, log);
+  s.reclassified = r.falseResolutions;
+  s.repeatContacts = r.repeatContacts;
   const estCostUsd = finish(null);
 
   const n = (x: number) => x.toLocaleString('en-US');
   log(
     `[link] run ${runId} done: ${s.evaluated} judged (${s.cached} from cache): ${s.confirmed} confirmed, ` +
       `${s.unconfirmed} unconfirmed (< threshold), ${s.rejected} different goal, ${s.failed} failed; ` +
-      `${s.reclassified} reclassified as false_resolution`,
+      `${s.reclassified} reclassified as false_resolution, ${s.repeatContacts} return contacts capped at passive`,
   );
   log(
     `[link] tokens: input ${n(s.usage.inputTokens)}, output ${n(s.usage.outputTokens)}, ` +
@@ -287,9 +295,14 @@ export async function runLinking(
 }
 
 /**
- * One reclassification per A with confirmed links and none yet: A → detractor, pointing
- * at the earliest confirmed return. Flags union across all confirmed returns, so an AI
- * "resolution" later finished by a human is flagged even if an AI retry came first.
+ * Turns confirmed links into reclassifications. Score rows are never edited.
+ * - A → detractor, reason false_resolution: the customer came back about the same goal.
+ *   One row per A, pointing at the earliest confirmed return; flags union across all
+ *   confirmed returns, so an AI "resolution" later finished by a human is flagged even if
+ *   an AI retry came first.
+ * - B (the return contact) promoter → passive, reason repeat_contact: it can't be
+ *   "resolved on first try". B that isn't a promoter needs no row; B not yet scored is
+ *   picked up on a later run.
  */
 function reclassifyConfirmed(
   db: Db,
@@ -298,52 +311,77 @@ function reclassifyConfirmed(
   promptVersion: string,
   now: () => Date,
   log: (msg: string) => void,
-): number {
-  const confirmed = db
-    .prepare(
-      `SELECT l.id, l.a_interaction_id AS a, l.b_interaction_id AS b, l.gap_days AS gap, l.flags_json AS flags
-       FROM links l JOIN interactions bi ON bi.id = l.b_interaction_id
-       WHERE l.status = 'confirmed' AND l.model = ? AND l.prompt_version = ?
-         AND NOT EXISTS (SELECT 1 FROM reclassifications r
-                         WHERE r.interaction_id = l.a_interaction_id AND r.reason = ? AND r.source = ?)
-       ORDER BY l.a_interaction_id, bi.started_at`,
-    )
-    .all(model, promptVersion, FALSE_RESOLUTION, SOURCE) as {
-    id: number;
-    a: string;
-    b: string;
-    gap: number;
-    flags: string;
-  }[];
+): { falseResolutions: number; repeatContacts: number } {
+  const confirmedWithout = (side: 'a' | 'b', reason: string, order: string) =>
+    db
+      .prepare(
+        `SELECT l.id, l.a_interaction_id AS a, l.b_interaction_id AS b, l.gap_days AS gap,
+                l.flags_json AS flags
+         FROM links l JOIN interactions bi ON bi.id = l.b_interaction_id
+         WHERE l.status = 'confirmed' AND l.model = ? AND l.prompt_version = ?
+           AND NOT EXISTS (SELECT 1 FROM reclassifications r
+                           WHERE r.interaction_id = l.${side}_interaction_id
+                             AND r.reason = ? AND r.source = ?)
+         ORDER BY ${order}`,
+      )
+      .all(model, promptVersion, reason, SOURCE) as {
+      id: number;
+      a: string;
+      b: string;
+      gap: number;
+      flags: string;
+    }[];
 
   const insert = db.prepare(
     `INSERT OR IGNORE INTO reclassifications
        (interaction_id, from_category, to_category, reason, source, created_at, link_id, flags_json)
-     VALUES (?, ?, 'detractor', ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   );
-  let count = 0;
+  let falseResolutions = 0;
+  let repeatContacts = 0;
   db.transaction(() => {
-    for (const [a, links] of Map.groupBy(confirmed, (l) => l.a)) {
+    const forA = confirmedWithout('a', FALSE_RESOLUTION, 'l.a_interaction_id, bi.started_at');
+    for (const [a, links] of Map.groupBy(forA, (l) => l.a)) {
       const from = byId.get(a)?.category;
       if (!from || from === 'detractor') continue;
       const first = links[0]!;
       const flags = [...new Set(links.flatMap((l) => JSON.parse(l.flags) as LinkFlag[]))].sort();
+      const at = now().toISOString();
       insert.run(
         a,
         from,
+        'detractor',
         FALSE_RESOLUTION,
         SOURCE,
-        now().toISOString(),
+        at,
         first.id,
         JSON.stringify(flags),
       );
-      count++;
+      falseResolutions++;
       log(
         `[link] ${a} ${from} → detractor (false_resolution; returned after ${first.gap.toFixed(1)}d as ${first.b}` +
           (flags.length ? `; ${flags.join(', ')}` : '') +
           ')',
       );
     }
+
+    const forB = confirmedWithout('b', REPEAT_CONTACT, 'l.b_interaction_id, l.id');
+    for (const [b, links] of Map.groupBy(forB, (l) => l.b)) {
+      if (byId.get(b)?.category !== 'promoter') continue;
+      const first = links[0]!;
+      insert.run(
+        b,
+        'promoter',
+        'passive',
+        REPEAT_CONTACT,
+        SOURCE,
+        now().toISOString(),
+        first.id,
+        '[]',
+      );
+      repeatContacts++;
+      log(`[link] ${b} promoter → passive (repeat_contact; return of ${first.a})`);
+    }
   })();
-  return count;
+  return { falseResolutions, repeatContacts };
 }

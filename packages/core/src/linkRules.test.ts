@@ -61,22 +61,33 @@ describe('findReturnCandidates', () => {
   });
 
   it('only pairs the same customer, and only forward in time', () => {
-    const a = ix({ day: 2 });
+    const a = ix({ day: 2, category: 'passive' });
     const other = ix({ day: 3, customerId: 'c2' });
     const before = ix({ day: 1, resolved: 'no', category: 'detractor' });
     expect(pairs([a, other, before])).toEqual([]);
   });
 
-  it('skips A unless resolved is "yes" and A is not already a detractor', () => {
-    const b = ix({ day: 2, resolved: 'no', category: 'detractor' });
+  it('includes A with an unconfirmed ("partial") resolution: the usual false resolution', () => {
+    const a = ix({ day: 0, resolved: 'partial', category: 'passive' });
+    const b = ix({ day: 2, resolved: null, category: null });
+    expect(pairs([a, b])).toEqual([[a.interactionId, b.interactionId]]);
+  });
+
+  it('skips A that is unscored or already a detractor, unless B is a promoter', () => {
+    const b = ix({ day: 2, resolved: 'yes', category: 'passive' });
     for (const a of [
-      ix({ day: 0, resolved: 'partial', category: 'passive' }),
       ix({ day: 0, resolved: 'no', category: 'detractor' }),
       ix({ day: 0, resolved: null, category: null }),
       ix({ day: 0, resolved: 'yes', category: 'detractor' }),
     ]) {
       expect(pairs([a, b])).toEqual([]);
     }
+  });
+
+  it('pairs a detractor A with a promoter B, so the repeat contact can be capped', () => {
+    const a = ix({ day: 0, resolved: 'no', category: 'detractor' });
+    const b = ix({ day: 2, resolved: 'yes', category: 'promoter' });
+    expect(pairs([a, b])).toEqual([[a.interactionId, b.interactionId]]);
   });
 
   it('returns every later interaction in the window', () => {

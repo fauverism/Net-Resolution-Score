@@ -13,7 +13,7 @@ import {
 } from '../score/llm.ts';
 import type { ScorerPrompt } from '../score/prompt.ts';
 
-export const DEFAULT_LINKER_PROMPT_VERSION = 'linker.v1';
+export const DEFAULT_LINKER_PROMPT_VERSION = 'linker.v2';
 
 export interface LinkerSettings {
   /** From ANTHROPIC_MODEL. Never hardcoded. */

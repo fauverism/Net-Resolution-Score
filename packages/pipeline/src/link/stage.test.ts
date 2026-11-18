@@ -1,5 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import {
+  finalCategory,
+  ReclassificationSchema,
   ScoredInteractionSchema,
   type Category,
   type Channel,
@@ -105,7 +107,7 @@ const FIXTURES: Fixture[] = [
     day: 4,
     transcript: 'Customer: My internet is acting up.\nAgent: Checking.',
   },
-  // c5: A was never confirmed resolved, so it can't be a false resolution.
+  // c5: the agent claimed a fix the customer never confirmed ("partial"): the classic false resolution.
   {
     id: 'a_partial',
     customer: 'c5',
@@ -148,6 +150,56 @@ const FIXTURES: Fixture[] = [
     line: 'billing',
     day: 2,
     transcript: 'Customer: Still no refund for the double charge.\nAgent: Fixed for real now.',
+  },
+];
+
+/** Scored return contacts: c7 a promoter return; c8 a chain where x2 is both a return and returned-from. */
+const RETURN_FIXTURES: Fixture[] = [
+  {
+    id: 'a_rc',
+    customer: 'c7',
+    channel: 'ai_agent',
+    line: 'billing',
+    day: 0,
+    transcript: 'Customer: I was charged twice.\nAgent: Refunded!\nCustomer: Okay, thank you.',
+    score: { resolved: 'partial', category: 'passive' },
+  },
+  {
+    id: 'b_rc',
+    customer: 'c7',
+    channel: 'human',
+    line: 'billing',
+    day: 2,
+    transcript:
+      'Customer: The double charge refund never came.\nAgent: Processed now.\nCustomer: I see it, thanks!',
+    score: { resolved: 'yes', category: 'promoter' },
+  },
+  {
+    id: 'x1',
+    customer: 'c8',
+    channel: 'ai_agent',
+    line: 'billing',
+    day: 0,
+    transcript: 'Customer: I was charged twice.\nAgent: Refunded!\nCustomer: Thanks.',
+    score: { resolved: 'yes', category: 'promoter' },
+  },
+  {
+    id: 'x2',
+    customer: 'c8',
+    channel: 'ai_agent',
+    line: 'billing',
+    day: 2,
+    transcript:
+      'Customer: I was charged twice and the double charge refund is missing.\nAgent: Fixed!\nCustomer: Great.',
+    score: { resolved: 'yes', category: 'promoter' },
+  },
+  {
+    id: 'x3',
+    customer: 'c8',
+    channel: 'human',
+    line: 'billing',
+    day: 4,
+    transcript: 'Customer: Still no refund for the double charge.\nAgent: Done properly this time.',
   },
 ];
 
@@ -254,7 +306,7 @@ describe('runLinking', () => {
       link_id: link.id,
     });
     expect(JSON.parse(r.flags_json as string)).toEqual(['ai_resolved_human_finished']);
-    expect(s.reclassified).toBe(2); // a_same and a_chain
+    expect(s.reclassified).toBe(3); // a_same, a_partial, a_chain
   });
 
   it('leaves a different-goal return alone', async () => {
@@ -293,10 +345,75 @@ describe('runLinking', () => {
     expect(reclassifications(db).map((r) => r.interaction_id)).not.toContain('a_unsure');
   });
 
-  it('only considers A when the scorer said resolved = "yes"', async () => {
+  it('links A with an unconfirmed ("partial") resolution and reclassifies it', async () => {
     const db = setup();
     await runLinking(db, fakeClient(judge), opts, () => {});
-    expect(linkRow(db, 'a_partial', 'b_partial')).toBeUndefined();
+    expect(linkRow(db, 'a_partial', 'b_partial')).toMatchObject({ status: 'confirmed' });
+    expect(reclassifications(db).find((r) => r.interaction_id === 'a_partial')).toMatchObject({
+      from_category: 'passive',
+      to_category: 'detractor',
+      reason: 'false_resolution',
+    });
+  });
+
+  it('caps a promoter return contact at passive (repeat_contact), and only promoters', async () => {
+    const db = setup([...FIXTURES, ...RETURN_FIXTURES]);
+    const logs: string[] = [];
+    const s = await runLinking(db, fakeClient(judge), opts, (m) => logs.push(m));
+    const repeat = reclassifications(db).filter((r) => r.reason === 'repeat_contact');
+    // b_rc and x2 are scored promoters; other returns are unscored, so nothing to cap yet.
+    expect(repeat.map((r) => [r.interaction_id, r.from_category, r.to_category])).toEqual([
+      ['b_rc', 'promoter', 'passive'],
+      ['x2', 'promoter', 'passive'],
+    ]);
+    expect(s.repeatContacts).toBe(2);
+    expect(logs).toContain('[link] b_rc promoter → passive (repeat_contact; return of a_rc)');
+    expect(db.prepare('SELECT repeat_contacts FROM link_runs').pluck().get()).toBe(2);
+  });
+
+  it('a contact that is both a return and returned-from ends up a detractor', async () => {
+    const db = setup([...FIXTURES, ...RETURN_FIXTURES]);
+    await runLinking(db, fakeClient(judge), opts, () => {});
+    const rows = reclassifications(db).filter((r) => r.interaction_id === 'x2');
+    expect(rows.map((r) => r.reason).sort()).toEqual(['false_resolution', 'repeat_contact']);
+    const score = ScoredInteractionSchema.parse(
+      JSON.parse(
+        db.prepare("SELECT json FROM scores WHERE interaction_id = 'x2'").pluck().get() as string,
+      ),
+    );
+    const recl = rows.map((r) =>
+      ReclassificationSchema.parse({
+        id: r.id,
+        interactionId: r.interaction_id,
+        fromCategory: r.from_category,
+        toCategory: r.to_category,
+        reason: r.reason,
+        source: r.source,
+        createdAt: r.created_at,
+      }),
+    );
+    expect(finalCategory(score, recl)).toBe('detractor');
+    expect(finalCategory(score, [...recl].reverse())).toBe('detractor');
+  });
+
+  it('caps a return contact scored on a later run', async () => {
+    const db = setup([...FIXTURES, ...RETURN_FIXTURES]);
+    await runLinking(db, fakeClient(judge), opts, () => {});
+    // b_same is unscored on the first run; score it as a promoter, then link again.
+    db.prepare(
+      `INSERT INTO scores (interaction_id, json, model, prompt_version, scored_at, status)
+       SELECT 'b_same', replace(json, '"b_rc"', '"b_same"'), model,
+              prompt_version, scored_at, status FROM scores WHERE interaction_id = 'b_rc'`,
+    ).run();
+    const again = fakeClient(judge);
+    const s = await runLinking(db, again, opts, () => {});
+    expect(again.calls).toHaveLength(0);
+    expect(s.repeatContacts).toBe(1);
+    expect(
+      reclassifications(db).find(
+        (r) => r.interaction_id === 'b_same' && r.reason === 'repeat_contact',
+      ),
+    ).toBeDefined();
   });
 
   it('reclassifies once per A, from the earliest return, with flags from every confirmed return', async () => {
@@ -341,7 +458,7 @@ describe('runLinking', () => {
     const s = await runLinking(db, again, opts, () => {});
     expect(again.calls).toHaveLength(0);
     expect(s.cached).toBe(s.evaluated);
-    expect(s.reclassified).toBe(2);
+    expect(s.reclassified).toBe(3);
   });
 
   it('sends only redacted transcripts and logs ids, never reasons', async () => {
