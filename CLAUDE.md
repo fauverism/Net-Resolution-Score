@@ -15,8 +15,7 @@ customer interaction, whether a human or an AI agent handled it.
 
 - **Return window**: defaults to 7 days. Never hardcode it. Resolve it in this
   order: per-business-line override → env `NRS_RETURN_WINDOW_DAYS` → `7`.
-- **Channels**: `ai_agent | human | hybrid`. Every metric must be reportable
-  per channel as well as in aggregate. Don't add a metric without a channel breakdown.
+- **Channels**: `ai_agent | human | hybrid`. Every metric must be reportable per channel.
 
 ## Non-negotiables
 
@@ -35,8 +34,7 @@ customer interaction, whether a human or an AI agent handled it.
 
 - TypeScript `strict`, ESM only (`"type": "module"`).
 - All score math (categorize, NRS, percentages, window checks) lives in
-  **pure functions** in `packages/core`, and each one has Vitest tests.
-  No I/O, clock or env reads inside them. Pass `now` and config in.
+  **pure functions** in `packages/core`, each with Vitest tests. No I/O, clock or env reads.
 - Keep side effects (DB, network, LLM) in `packages/pipeline` and apps.
 
 ## Layout
