@@ -18,7 +18,7 @@ seed options:
 score / link options:
   --limit <n>         judge at most n new items (cheap test runs)
 
-aggregate options:
+aggregate / drivers options:
   --from YYYY-MM-DD --to YYYY-MM-DD   inclusive UTC dates
                       (default: the 30 days ending on the latest interaction)`;
 

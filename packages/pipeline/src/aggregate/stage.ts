@@ -2,15 +2,12 @@ import {
   buildPeriodReport,
   PeriodReportSchema,
   periodFromDates,
-  ReclassificationSchema,
-  ScoreRecordSchema,
   toReportItem,
   type PeriodReport,
-  type Reclassification,
   type ReportItem,
-  type ScoreRecord,
 } from '@nrs/core';
 import type { Db } from '../db.ts';
+import { loadPeriodScores } from './load.ts';
 
 export interface AggregateOptions {
   /** Inclusive YYYY-MM-DD dates (UTC). */
@@ -26,7 +23,6 @@ interface Loaded {
   counts: PeriodReport['counts'];
 }
 
-/** Interactions started in [start, end) with their score (if any) and reclassifications. */
 function loadPeriod(
   db: Db,
   start: string,
@@ -34,53 +30,17 @@ function loadPeriod(
   model: string,
   promptVersion: string,
 ): Loaded {
-  const rows = db
-    .prepare(
-      `SELECT i.id, i.channel, i.business_line, s.json
-       FROM interactions i
-       LEFT JOIN scores s ON s.interaction_id = i.id AND s.model = ? AND s.prompt_version = ?
-       WHERE i.started_at >= ? AND i.started_at < ?
-       ORDER BY i.id`,
-    )
-    .all(model, promptVersion, start, end) as {
-    id: string;
-    channel: string;
-    business_line: string;
-    json: string | null;
-  }[];
-
-  const reclassifications = (
-    db
-      .prepare(
-        `SELECT r.id, r.interaction_id AS interactionId, r.from_category AS fromCategory,
-                r.to_category AS toCategory, r.reason, r.source, r.created_at AS createdAt
-         FROM reclassifications r JOIN interactions i ON i.id = r.interaction_id
-         WHERE i.started_at >= ? AND i.started_at < ?`,
-      )
-      .all(start, end) as unknown[]
-  ).map((r) => ReclassificationSchema.parse(r));
-  const byInteraction = Map.groupBy(reclassifications, (r) => r.interactionId);
-
+  const rows = loadPeriodScores(db, start, end, model, promptVersion);
   const items: ReportItem[] = [];
   const counts = { interactions: rows.length, scored: 0, scoreFailed: 0, unscored: 0 };
-  for (const row of rows) {
-    if (!row.json) {
+  for (const { score, reclassifications } of rows) {
+    if (!score) {
       counts.unscored++;
       continue;
     }
-    const parsed = ScoreRecordSchema.safeParse(JSON.parse(row.json));
-    // A row that no longer validates is treated like a failed score: lowest defensible category.
-    const score: ScoreRecord = parsed.success
-      ? parsed.data
-      : ({
-          interactionId: row.id,
-          channel: row.channel,
-          businessLine: row.business_line,
-          status: 'score_failed',
-        } as ScoreRecord);
     if (score.status === 'scored') counts.scored++;
     else counts.scoreFailed++;
-    items.push(toReportItem(score, byInteraction.get(row.id) ?? ([] as Reclassification[])));
+    items.push(toReportItem(score, reclassifications));
   }
   return { items, counts };
 }

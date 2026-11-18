@@ -5,6 +5,8 @@ import { migrate, openDb } from './db.ts';
 import { resolveFromRoot } from './paths.ts';
 import { runRedaction } from './redact/index.ts';
 import { defaultPeriod, runAggregate } from './aggregate/stage.ts';
+import { DEFAULT_CLUSTER_PROMPT_VERSION, DEFAULT_SUGGEST_PROMPT_VERSION } from './drivers/llm.ts';
+import { runDrivers } from './drivers/stage.ts';
 import { DEFAULT_LINKER_PROMPT_VERSION, runLinking } from './link/index.ts';
 import { DEFAULT_PROMPT_VERSION, loadPrompt } from './score/prompt.ts';
 import { anthropicScorerClient } from './score/scorer.ts';
@@ -162,23 +164,58 @@ const link: Command = async ({ config, log }, args = []) => {
  * `runs`. Without dates: the 30 days ending on the latest interaction.
  */
 const aggregate: Command = async ({ config, log }, args = []) => {
+  const model = requireModel(config);
+  const db = openDb(config.dbPath);
+  try {
+    migrate(db);
+    const { from, to } = resolvePeriod(args, db);
+    runAggregate(db, { from, to, model, promptVersion: DEFAULT_PROMPT_VERSION }, log);
+  } finally {
+    db.close();
+  }
+};
+
+/** --from/--to (inclusive YYYY-MM-DD, UTC), or the 30 days ending on the latest interaction. */
+function resolvePeriod(
+  args: string[],
+  db: ReturnType<typeof openDb>,
+): { from: string; to: string } {
   const { values } = parseArgs({
     args,
     options: { from: { type: 'string' }, to: { type: 'string' } },
     strict: false,
   });
+  const from = typeof values.from === 'string' ? values.from : undefined;
+  const to = typeof values.to === 'string' ? values.to : undefined;
+  if (from && to) return { from, to };
+  if (from || to) throw new Error('Pass both --from and --to (YYYY-MM-DD), or neither.');
+  return defaultPeriod(db);
+}
+
+/**
+ * Clusters the period's detractors by goal, ranks clusters by volume × severity, and
+ * adds AI-suggested fixes and owners for the top 3. Same --from/--to as aggregate.
+ */
+const drivers: Command = async ({ config, log }, args = []) => {
   const model = requireModel(config);
   const db = openDb(config.dbPath);
   try {
     migrate(db);
-    const given = typeof values.from === 'string' || typeof values.to === 'string';
-    if (given && (typeof values.from !== 'string' || typeof values.to !== 'string')) {
-      throw new Error('Pass both --from and --to (YYYY-MM-DD), or neither.');
-    }
-    const { from, to } = given
-      ? { from: values.from as string, to: values.to as string }
-      : defaultPeriod(db);
-    runAggregate(db, { from, to, model, promptVersion: DEFAULT_PROMPT_VERSION }, log);
+    const { from, to } = resolvePeriod(args, db);
+    await runDrivers(
+      db,
+      anthropicScorerClient(new Anthropic({ maxRetries: 0 })),
+      {
+        from,
+        to,
+        model,
+        effort: config.scoringEffort,
+        scorerPromptVersion: DEFAULT_PROMPT_VERSION,
+        clusterPrompt: loadPrompt(DEFAULT_CLUSTER_PROMPT_VERSION),
+        suggestPrompt: loadPrompt(DEFAULT_SUGGEST_PROMPT_VERSION),
+      },
+      log,
+    );
   } finally {
     db.close();
   }
@@ -201,12 +238,15 @@ export const COMMANDS = {
   score,
   link,
   aggregate,
-  drivers: notYet('drivers'),
+  drivers,
   calibrate: notYet('calibrate'),
-  // Flags go to score, link and aggregate, e.g. `npm run pipeline -- --limit 20`.
+  // Flags go to score, link, aggregate and drivers, e.g. `npm run pipeline -- --limit 20`.
   all: async (ctx, args = []) => {
     for (const stage of PIPELINE_STAGES) {
-      await COMMANDS[stage](ctx, ['score', 'link', 'aggregate'].includes(stage) ? args : []);
+      await COMMANDS[stage](
+        ctx,
+        ['score', 'link', 'aggregate', 'drivers'].includes(stage) ? args : [],
+      );
     }
   },
 } satisfies Record<string, Command>;

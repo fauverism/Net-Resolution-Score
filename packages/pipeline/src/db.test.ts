@@ -9,6 +9,7 @@ describe('migrate', () => {
       '002_redacted_transcripts.sql',
       '003_scoring.sql',
       '004_linking.sql',
+      '005_drivers.sql',
     ]);
     expect(migrate(db)).toEqual([]);
 

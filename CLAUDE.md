@@ -52,7 +52,7 @@ evals/              scorer accuracy evals against labeled transcripts
 - **redact**: strip PII.
 - **score**: Anthropic API → Zod-validated category and effort.
 - **link**: window candidates → LLM same-goal check → `reclassifications` row (score rows never edited).
-- **aggregate**: NRS by channel and business line. Also: `drivers`, `calibrate`.
+- **aggregate**: NRS by channel and business line → `runs`. **drivers**: cluster detractor goals, rank by volume × severity, AI-suggested fix/owner for the top 3 → `driver_runs`. Also: `calibrate`.
 
 ## Commands
 
