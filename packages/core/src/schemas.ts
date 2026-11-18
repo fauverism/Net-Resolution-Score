@@ -169,15 +169,3 @@ export const ScoreBreakdownSchema = z.object({
   nrs: z.number().min(-100).max(100).nullable(),
 });
 export type ScoreBreakdown = z.infer<typeof ScoreBreakdownSchema>;
-
-export const PeriodReportSchema = z.object({
-  periodStart: IsoDateTime,
-  periodEnd: IsoDateTime,
-  returnWindowDays: z.number().int().positive(),
-  overall: ScoreBreakdownSchema,
-  byChannel: z.record(ChannelSchema, ScoreBreakdownSchema),
-  byBusinessLine: z.record(z.string(), ScoreBreakdownSchema),
-  /** NPS for the same period, for side-by-side comparison; null if no surveys. */
-  nps: z.number().min(-100).max(100).nullable(),
-});
-export type PeriodReport = z.infer<typeof PeriodReportSchema>;

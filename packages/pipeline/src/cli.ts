@@ -1,8 +1,9 @@
 #!/usr/bin/env -S npx tsx
-import { COMMANDS, isCommandName } from './commands.ts';
+import { pathToFileURL } from 'node:url';
+import { COMMANDS, isCommandName, type CommandName } from './commands.ts';
 import { loadConfig, loadDotEnv } from './config.ts';
 
-const USAGE = `Usage: nrs <command>
+const USAGE = `Usage: nrs <command> [options]
 
 Commands:
   ${Object.keys(COMMANDS).join(' | ')}
@@ -12,13 +13,36 @@ seed options:
   --customers <n>     (default 500)
   --interactions <n>  approximate total (default 3000)
   --days <n>          length of the data period (default 60)
-  --end <iso date>    end of the data period (default 2026-11-15)`;
+  --end <iso date>    end of the data period (default 2026-11-15)
 
-async function main(argv: string[]): Promise<number> {
-  const [name, ...rest] = argv.filter((a) => a !== '--');
-  if (!name || name === '-h' || name === '--help') {
+score / link options:
+  --limit <n>         judge at most n new items (cheap test runs)
+
+aggregate options:
+  --from YYYY-MM-DD --to YYYY-MM-DD   inclusive UTC dates
+                      (default: the 30 days ending on the latest interaction)`;
+
+/**
+ * Runs `nrs <command> ...`. With `defaultCommand`, a missing command or leading flags
+ * run that command instead: `npm run pipeline -- --limit 20` means `all --limit 20`.
+ */
+export async function main(
+  argv: string[],
+  opts: { defaultCommand?: CommandName } = {},
+): Promise<number> {
+  const args = argv.filter((a) => a !== '--');
+  let [name, ...rest] = args;
+  if (name === '-h' || name === '--help') {
     console.log(USAGE);
-    return name ? 0 : 1;
+    return 0;
+  }
+  if (opts.defaultCommand && (!name || name.startsWith('-'))) {
+    name = opts.defaultCommand;
+    rest = args;
+  }
+  if (!name) {
+    console.log(USAGE);
+    return 1;
   }
   if (!isCommandName(name)) {
     console.error(`Unknown command: ${name}\n\n${USAGE}`);
@@ -29,10 +53,16 @@ async function main(argv: string[]): Promise<number> {
   return 0;
 }
 
-main(process.argv.slice(2)).then(
-  (code) => process.exit(code),
-  (err: unknown) => {
-    console.error(err instanceof Error ? err.message : err);
-    process.exit(1);
-  },
-);
+export function runCli(argv: string[], opts: { defaultCommand?: CommandName } = {}): void {
+  main(argv, opts).then(
+    (code) => process.exit(code),
+    (err: unknown) => {
+      console.error(err instanceof Error ? err.message : err);
+      process.exit(1);
+    },
+  );
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  runCli(process.argv.slice(2));
+}

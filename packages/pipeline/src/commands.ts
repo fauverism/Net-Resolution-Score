@@ -4,6 +4,7 @@ import { requireModel, type Config } from './config.ts';
 import { migrate, openDb } from './db.ts';
 import { resolveFromRoot } from './paths.ts';
 import { runRedaction } from './redact/index.ts';
+import { defaultPeriod, runAggregate } from './aggregate/stage.ts';
 import { DEFAULT_LINKER_PROMPT_VERSION, runLinking } from './link/index.ts';
 import { DEFAULT_PROMPT_VERSION, loadPrompt } from './score/prompt.ts';
 import { anthropicScorerClient } from './score/scorer.ts';
@@ -156,6 +157,33 @@ const link: Command = async ({ config, log }, args = []) => {
   }
 };
 
+/**
+ * Builds the PeriodReport for --from/--to (inclusive YYYY-MM-DD, UTC) and saves it to
+ * `runs`. Without dates: the 30 days ending on the latest interaction.
+ */
+const aggregate: Command = async ({ config, log }, args = []) => {
+  const { values } = parseArgs({
+    args,
+    options: { from: { type: 'string' }, to: { type: 'string' } },
+    strict: false,
+  });
+  const model = requireModel(config);
+  const db = openDb(config.dbPath);
+  try {
+    migrate(db);
+    const given = typeof values.from === 'string' || typeof values.to === 'string';
+    if (given && (typeof values.from !== 'string' || typeof values.to !== 'string')) {
+      throw new Error('Pass both --from and --to (YYYY-MM-DD), or neither.');
+    }
+    const { from, to } = given
+      ? { from: values.from as string, to: values.to as string }
+      : defaultPeriod(db);
+    runAggregate(db, { from, to, model, promptVersion: DEFAULT_PROMPT_VERSION }, log);
+  } finally {
+    db.close();
+  }
+};
+
 /** Pipeline order for `all`. Seed is separate: it's a setup step, not a pipeline stage. */
 export const PIPELINE_STAGES = [
   'ingest',
@@ -172,13 +200,13 @@ export const COMMANDS = {
   redact: redactStage,
   score,
   link,
-  aggregate: notYet('aggregate'),
+  aggregate,
   drivers: notYet('drivers'),
   calibrate: notYet('calibrate'),
-  // Flags go to the LLM stages, e.g. `npm run pipeline -- --limit 20`.
+  // Flags go to score, link and aggregate, e.g. `npm run pipeline -- --limit 20`.
   all: async (ctx, args = []) => {
     for (const stage of PIPELINE_STAGES) {
-      await COMMANDS[stage](ctx, stage === 'score' || stage === 'link' ? args : []);
+      await COMMANDS[stage](ctx, ['score', 'link', 'aggregate'].includes(stage) ? args : []);
     }
   },
 } satisfies Record<string, Command>;

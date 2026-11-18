@@ -11,7 +11,7 @@
   },
   "scripts": {
     "seed": "npm run seed -w @nrs/pipeline --",
-    "pipeline": "npm run all -w @nrs/pipeline --",
+    "pipeline": "npm run pipeline -w @nrs/pipeline --",
     "eval": "tsx evals/run.ts",
     "dev": "npm run dev -w @nrs/dashboard",
     "test": "vitest run",

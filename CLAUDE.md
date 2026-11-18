@@ -59,7 +59,7 @@ evals/              scorer accuracy evals against labeled transcripts
 ```bash
 npm run seed       # reproducible synthetic data (--seed N); never calls the LLM
 npm run pipeline   # `all`: ingest → redact → score → link → aggregate → drivers (-- --limit N)
-npm run cli -w @nrs/pipeline -- <cmd>   # run one stage
+npm run pipeline -- <stage> [opts]   # one stage, e.g. aggregate --from 2026-10-01 --to 2026-10-31
 npm run eval       # run scorer evals in /evals
 npm run dev        # start the dashboard
 npm test           # Vitest across all packages
