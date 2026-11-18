@@ -164,7 +164,6 @@ export async function runScoring(
       category,
       override,
       flags,
-      returnedWithinWindow: null,
       cacheKey: key,
       cached: attempts === 0,
       attempts,

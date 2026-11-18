@@ -4,7 +4,8 @@ import { requireModel, type Config } from './config.ts';
 import { migrate, openDb } from './db.ts';
 import { resolveFromRoot } from './paths.ts';
 import { runRedaction } from './redact/index.ts';
-import { loadPrompt } from './score/prompt.ts';
+import { DEFAULT_LINKER_PROMPT_VERSION, runLinking } from './link/index.ts';
+import { DEFAULT_PROMPT_VERSION, loadPrompt } from './score/prompt.ts';
 import { anthropicScorerClient } from './score/scorer.ts';
 import { runScoring } from './score/stage.ts';
 import { DEFAULT_GENERATE_OPTIONS, generate, summarize, writeSeed } from './seed/index.ts';
@@ -92,14 +93,17 @@ const redactStage = withDb((db, { log }) => {
  * Scores redacted transcripts with the Anthropic API. `--limit N` caps how many
  * unscored interactions this run sends (cheap test runs).
  */
-const score: Command = async ({ config, log }, args = []) => {
+function parseLimit(args: string[]): number | undefined {
   const { values } = parseArgs({ args, options: { limit: { type: 'string' } }, strict: false });
-  let limit: number | undefined;
-  if (typeof values.limit === 'string') {
-    limit = Number(values.limit);
-    if (!Number.isInteger(limit) || limit < 0)
-      throw new Error('--limit must be a non-negative integer');
-  }
+  if (typeof values.limit !== 'string') return undefined;
+  const limit = Number(values.limit);
+  if (!Number.isInteger(limit) || limit < 0)
+    throw new Error('--limit must be a non-negative integer');
+  return limit;
+}
+
+const score: Command = async ({ config, log }, args = []) => {
+  const limit = parseLimit(args);
   const model = requireModel(config); // fail fast before touching anything
   const db = openDb(config.dbPath);
   try {
@@ -123,6 +127,35 @@ const score: Command = async ({ config, log }, args = []) => {
   }
 };
 
+/**
+ * Finds false resolutions: deterministic (A, B) candidates within the return window,
+ * confirmed by the LLM. `--limit N` caps how many new pairs this run judges.
+ */
+const link: Command = async ({ config, log }, args = []) => {
+  const limit = parseLimit(args);
+  const model = requireModel(config);
+  const db = openDb(config.dbPath);
+  try {
+    migrate(db);
+    await runLinking(
+      db,
+      anthropicScorerClient(new Anthropic({ maxRetries: 0 })),
+      {
+        model,
+        prompt: loadPrompt(DEFAULT_LINKER_PROMPT_VERSION),
+        effort: config.scoringEffort,
+        concurrency: config.scoringConcurrency,
+        limit,
+        window: config.returnWindow,
+        scorer: { model, promptVersion: DEFAULT_PROMPT_VERSION },
+      },
+      log,
+    );
+  } finally {
+    db.close();
+  }
+};
+
 /** Pipeline order for `all`. Seed is separate: it's a setup step, not a pipeline stage. */
 export const PIPELINE_STAGES = [
   'ingest',
@@ -138,13 +171,15 @@ export const COMMANDS = {
   ingest: notYet('ingest'),
   redact: redactStage,
   score,
-  link: notYet('link'),
+  link,
   aggregate: notYet('aggregate'),
   drivers: notYet('drivers'),
   calibrate: notYet('calibrate'),
-  // Flags go to the score stage, e.g. `npm run pipeline -- --limit 20`.
+  // Flags go to the LLM stages, e.g. `npm run pipeline -- --limit 20`.
   all: async (ctx, args = []) => {
-    for (const stage of PIPELINE_STAGES) await COMMANDS[stage](ctx, stage === 'score' ? args : []);
+    for (const stage of PIPELINE_STAGES) {
+      await COMMANDS[stage](ctx, stage === 'score' || stage === 'link' ? args : []);
+    }
   },
 } satisfies Record<string, Command>;
 

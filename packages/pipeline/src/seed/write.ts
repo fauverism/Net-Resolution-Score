@@ -9,6 +9,7 @@ export function writeSeed(db: Db, data: SeedData, groundTruthPath: string): void
     for (const t of [
       'scores',
       'reclassifications',
+      'links',
       'surveys',
       'runs',
       'interactions',

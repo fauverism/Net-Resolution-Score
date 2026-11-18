@@ -1,27 +1,25 @@
 import type Anthropic from '@anthropic-ai/sdk';
-import {
-  CategorySchema,
-  CHANNELS,
-  ScorerOutputSchema,
-  type ScorerOutput,
-  type TokenUsage,
-} from '@nrs/core';
-import { z } from 'zod';
-import { addUsage, ZERO_USAGE } from './pricing.ts';
-import type { ScorerPrompt } from './prompt.ts';
+import { CategorySchema, CHANNELS, ScorerOutputSchema, type ScorerOutput } from '@nrs/core';
+import type { BackoffOptions } from './backoff.ts';
 import type { ScoringInput } from './inputs.ts';
-import { DEFAULT_BACKOFF, isRetryable, withBackoff, type BackoffOptions } from './backoff.ts';
+import {
+  anthropicClient,
+  parseJsonResponse,
+  requestValidated,
+  retryMessages,
+  type Attempt,
+  type Effort,
+  type LlmClient,
+  type Parsed,
+  type RetryContext,
+} from './llm.ts';
+import type { ScorerPrompt } from './prompt.ts';
+
+export { usageOf, type Effort } from './llm.ts';
 
 /** The one SDK call the scorer makes. Tests pass a fake. */
-export interface ScorerClient {
-  create(params: Anthropic.MessageCreateParamsNonStreaming): Promise<Anthropic.Message>;
-}
-
-export function anthropicScorerClient(client: Anthropic): ScorerClient {
-  return { create: (params) => client.messages.create(params) };
-}
-
-export type Effort = NonNullable<Anthropic.OutputConfig['effort']>;
+export type ScorerClient = LlmClient;
+export const anthropicScorerClient = anthropicClient;
 
 export interface ScorerSettings {
   /** From ANTHROPIC_MODEL. Never hardcoded. */
@@ -69,7 +67,7 @@ export const OUTPUT_JSON_SCHEMA = {
 export function buildRequest(
   input: ScoringInput,
   s: ScorerSettings,
-  retry?: { previous: Anthropic.Message; error: string },
+  retry?: RetryContext,
 ): Anthropic.MessageCreateParamsNonStreaming {
   const messages: Anthropic.MessageParam[] = [
     {
@@ -77,15 +75,7 @@ export function buildRequest(
       content: `Recorded channel: ${input.channel}\n\n<transcript>\n${input.transcript}\n</transcript>`,
     },
   ];
-  if (retry) {
-    messages.push(
-      { role: 'assistant', content: retry.previous.content },
-      {
-        role: 'user',
-        content: `Your response failed validation:\n${retry.error}\n\nReturn one corrected JSON object only.`,
-      },
-    );
-  }
+  if (retry) messages.push(...retryMessages(retry));
   return {
     model: s.model,
     // Room for adaptive thinking plus a small JSON object.
@@ -100,110 +90,23 @@ export function buildRequest(
   };
 }
 
-export function usageOf(m: Anthropic.Message): TokenUsage {
-  return {
-    inputTokens: m.usage.input_tokens,
-    outputTokens: m.usage.output_tokens,
-    cacheReadTokens: m.usage.cache_read_input_tokens ?? 0,
-    cacheWriteTokens: m.usage.cache_creation_input_tokens ?? 0,
-  };
+/** Validates one scorer response. */
+export function parseResponse(m: Anthropic.Message): Parsed<ScorerOutput> {
+  return parseJsonResponse(m, ScorerOutputSchema);
 }
 
-type Parsed =
-  | { ok: true; output: ScorerOutput }
-  | { ok: false; reason: 'invalid_output' | 'refusal'; error: string };
+export type ScoreAttempt = Attempt<ScorerOutput>;
 
-/** Validates one response. Error text never includes transcript or output content. */
-export function parseResponse(m: Anthropic.Message): Parsed {
-  if (m.stop_reason === 'refusal') {
-    return {
-      ok: false,
-      reason: 'refusal',
-      error: `refused (${m.stop_details?.category ?? 'no category'})`,
-    };
-  }
-  if (m.stop_reason === 'max_tokens') {
-    return { ok: false, reason: 'invalid_output', error: 'Response was cut off at max_tokens.' };
-  }
-  const text = m.content
-    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-    .map((b) => b.text)
-    .join('')
-    .trim();
-  let json: unknown;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    return { ok: false, reason: 'invalid_output', error: 'Response was not valid JSON.' };
-  }
-  const result = ScorerOutputSchema.safeParse(json);
-  if (!result.success) {
-    // Paths and rule messages only; z.prettifyError doesn't echo input values.
-    return { ok: false, reason: 'invalid_output', error: z.prettifyError(result.error) };
-  }
-  return { ok: true, output: result.data };
-}
-
-export type ScoreAttempt =
-  | { ok: true; output: ScorerOutput; attempts: number; retried: boolean; usage: TokenUsage }
-  | {
-      ok: false;
-      reason: 'invalid_output' | 'refusal' | 'api_error';
-      detail: string;
-      attempts: number;
-      usage: TokenUsage;
-    };
-
-/**
- * Scores one interaction: call, validate, and on invalid output retry once with the
- * validation error included. Retryable API errors back off inside each call.
- * Non-retryable API errors (bad request, auth, unknown model) are thrown: they'd fail
- * every interaction, so the run should stop rather than record thousands of failures.
- */
-export async function scoreInteraction(
+/** Scores one interaction, retrying once on invalid output (see requestValidated). */
+export function scoreInteraction(
   client: ScorerClient,
   input: ScoringInput,
   s: ScorerSettings,
 ): Promise<ScoreAttempt> {
-  const call = (params: Anthropic.MessageCreateParamsNonStreaming) =>
-    withBackoff(() => client.create(params), s.backoff ?? DEFAULT_BACKOFF);
-
-  let usage = ZERO_USAGE;
-  let first: Anthropic.Message;
-  try {
-    first = await call(buildRequest(input, s));
-  } catch (err) {
-    return apiFailure(err, 1, usage);
-  }
-  usage = addUsage(usage, usageOf(first));
-  const parsed = parseResponse(first);
-  if (parsed.ok) return { ok: true, output: parsed.output, attempts: 1, retried: false, usage };
-  if (parsed.reason === 'refusal') {
-    return { ok: false, reason: 'refusal', detail: parsed.error, attempts: 1, usage };
-  }
-
-  let second: Anthropic.Message;
-  try {
-    second = await call(buildRequest(input, s, { previous: first, error: parsed.error }));
-  } catch (err) {
-    return apiFailure(err, 2, usage);
-  }
-  usage = addUsage(usage, usageOf(second));
-  const reparsed = parseResponse(second);
-  if (reparsed.ok) return { ok: true, output: reparsed.output, attempts: 2, retried: true, usage };
-  return { ok: false, reason: reparsed.reason, detail: reparsed.error, attempts: 2, usage };
-}
-
-function apiFailure(err: unknown, attempts: number, usage: TokenUsage): ScoreAttempt {
-  // Only retryable errors that exhausted backoff are per-interaction failures. Anything
-  // else (400/401/403/404, or a bug) aborts the run.
-  if (!isRetryable(err)) throw err;
-  const e = err as { status?: number; type?: string | null; name?: string };
-  return {
-    ok: false,
-    reason: 'api_error',
-    detail: [e.name ?? 'Error', e.status, e.type].filter(Boolean).join(' '),
-    attempts,
-    usage,
-  };
+  return requestValidated(
+    client,
+    (retry) => buildRequest(input, s, retry),
+    ScorerOutputSchema,
+    s.backoff,
+  );
 }

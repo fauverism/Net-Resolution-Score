@@ -105,8 +105,6 @@ export const ScoredInteractionSchema = z.object({
   category: CategorySchema,
   override: CategoryOverrideSchema.nullable(),
   flags: z.array(ScoreFlagSchema),
-  /** Set by the link stage; null until linked. */
-  returnedWithinWindow: z.boolean().nullable(),
   cacheKey: z.string(),
   cached: z.boolean(),
   usage: TokenUsageSchema,
@@ -128,6 +126,31 @@ export const ScoreRecordSchema = z.discriminatedUnion('status', [
   ScoreFailureSchema,
 ]);
 export type ScoreRecord = z.infer<typeof ScoreRecordSchema>;
+
+/** What the LLM linker returns for one candidate pair (validated before use). */
+export const LinkerOutputSchema = z
+  .object({
+    same_goal: z.boolean(),
+    confidence: z.number().min(0).max(1),
+    why: z.string().trim().min(1).max(500),
+  })
+  .strict();
+export type LinkerOutput = z.infer<typeof LinkerOutputSchema>;
+
+export const LinkStatusSchema = z.enum([
+  /** Same goal at or above the confidence threshold: A gets reclassified. */
+  'confirmed',
+  /** Same goal, but below the threshold: kept for review, no reclassification. */
+  'unconfirmed',
+  /** Different goal. */
+  'rejected',
+  /** Invalid output twice, a refusal, or API errors after backoff. Retried next run. */
+  'link_failed',
+]);
+export type LinkStatus = z.infer<typeof LinkStatusSchema>;
+
+export const LinkFlagSchema = z.enum(['ai_resolved_human_finished']);
+export type LinkFlag = z.infer<typeof LinkFlagSchema>;
 
 export const SurveyResponseSchema = z.object({
   customerId: z.string().min(1),

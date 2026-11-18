@@ -14,7 +14,7 @@ customer interaction, whether a human or an AI agent handled it.
 | Detractor | Unresolved, escalated, abandoned, **or** customer returned about the same goal within the return window |
 
 - **Return window**: defaults to 7 days. Never hardcode it. Resolve it in this
-  order: per-business-line override → env `RETURN_WINDOW_DAYS` → `7`.
+  order: per-business-line override (`RETURN_WINDOW_DAYS_BY_LINE=billing=14,…`) → `RETURN_WINDOW_DAYS` → `7`.
 - **Channels**: `ai_agent | human | hybrid`. Every metric must be reportable per channel.
 
 ## Non-negotiables
@@ -51,7 +51,7 @@ evals/              scorer accuracy evals against labeled transcripts
 - **ingest** (pipeline stages, in order): parse and validate raw interactions.
 - **redact**: strip PII.
 - **score**: Anthropic API → Zod-validated category and effort.
-- **link**: detect same-goal returns within the window.
+- **link**: window candidates → LLM same-goal check → `reclassifications` row (score rows never edited).
 - **aggregate**: NRS by channel and business line. Also: `drivers`, `calibrate`.
 
 ## Commands
