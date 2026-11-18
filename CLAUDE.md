@@ -23,7 +23,7 @@ customer interaction, whether a human or an AI agent handled it.
    picks the LOWER one (Promoter > Passive > Detractor). This applies to
    prompts, parsing fallbacks and tie-breaks in code.
 2. **Redact PII before any transcript leaves the process**: LLM calls, logs,
-   exports, fixtures. Redaction runs before scoring, never after.
+   exports, fixtures. Redaction runs before scoring, never after. (Seed PII is fake by design.)
 3. **Model comes from env `ANTHROPIC_MODEL`.** Never hardcode a model name in
    code, tests, or fixtures. Fail fast if it's unset.
 4. **Validate every external boundary with Zod**: LLM output, file imports and
@@ -43,7 +43,7 @@ customer interaction, whether a human or an AI agent handled it.
 packages/core       types, Zod schemas, pure score math
 packages/pipeline   CLI (src/cli.ts), db + SQL migrations (migrations/*.sql)
 apps/dashboard      Vite + React on :5150; Hono API in server/ on :5151, proxied at /api
-data/               SQLite db (better-sqlite3, gitignored), fixtures (PII-free)
+data/               SQLite db + fixtures/ground-truth.json (both gitignored, rebuilt by seed)
 evals/              scorer accuracy evals against labeled transcripts
 ```
 
@@ -56,7 +56,7 @@ evals/              scorer accuracy evals against labeled transcripts
 ## Commands
 
 ```bash
-npm run seed       # migrate db + load fixtures into data/ SQLite
+npm run seed       # reproducible synthetic data (--seed N); never calls the LLM
 npm run pipeline   # `all`: ingest → score → link → aggregate → drivers
 npm run cli -w @nrs/pipeline -- <cmd>   # run one stage
 npm run eval       # run scorer evals in /evals
