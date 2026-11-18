@@ -1,0 +1,23 @@
+{
+  "name": "@nrs/pipeline",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "nrs": "./src/cli.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./db": "./src/db.ts"
+  },
+  "scripts": {
+    "cli": "tsx src/cli.ts",
+    "seed": "tsx src/cli.ts seed",
+    "all": "tsx src/cli.ts all"
+  },
+  "dependencies": {
+    "@nrs/core": "*",
+    "better-sqlite3": "^12.4.0",
+    "zod": "^4.1.0"
+  }
+}
